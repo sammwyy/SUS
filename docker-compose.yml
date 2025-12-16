@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  sus:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/data
+    environment:
+      - PORT=3000
+      - UPLOAD_DIR=/data
+      - PASSWORD=your_password_here
+    restart: unless-stopped

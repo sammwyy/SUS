@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SUS - Simple Upload Service</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.561.0/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+    const { Upload, File, CheckCircle, XCircle, Lock, Download, Trash2 } = lucide;
+
+    const Icon = ({ icon, size = 24, color = "currentColor", ...props }) => {
+      return (
+        <svg
+          width={size}
+          height={size}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          {...props}
+        >
+          {icon.map(([tag, attrs], i) =>
+            React.createElement(tag, { key: i, ...attrs })
+          )}
+        </svg>
+      );
+    };
+
+    const App = () => {
+      const [isAuthenticated, setIsAuthenticated] = useState(false);
+      const [password, setPassword] = useState('');
+      const [authError, setAuthError] = useState('');
+      const [uploads, setUploads] = useState([]);
+      const [files, setFiles] = useState([]);
+      const [isDragging, setIsDragging] = useState(false);
+      const [maxParallel, setMaxParallel] = useState(3);
+      const fileInputRef = useRef(null);
+
+      const API_URL = '/api';
+
+      useEffect(() => {
+        if (isAuthenticated) {
+          fetchFiles();
+        }
+      }, [isAuthenticated]);
+
+      const fetchFiles = async () => {
+        try {
+          const response = await fetch(`${API_URL}/files`, {
+            headers: password ? { 'Authorization': password } : {}
+          });
+          if (response.ok) {
+            const data = await response.json();
+            setFiles(data.files || []);
+          }
+        } catch (error) {
+          console.error('Failed to fetch files:', error);
+        }
+      };
+
+      const handleAuth = async () => {
+        try {
+          const response = await fetch(`${API_URL}/files`, {
+            headers: password ? { 'Authorization': password } : {}
+          });
+
+          if (response.ok) {
+            setIsAuthenticated(true);
+            setAuthError('');
+          } else {
+            setAuthError('Invalid password');
+          }
+        } catch (error) {
+          setAuthError('Authentication failed');
+        }
+      };
+
+      const handleFileSelect = (selectedFiles) => {
+        const newUploads = Array.from(selectedFiles).map(file => ({
+          id: Math.random().toString(36).substr(2, 9),
+          file,
+          progress: 0,
+          status: 'pending',
+          error: null
+        }));
+        setUploads(prev => [...prev, ...newUploads]);
+        processQueue([...uploads, ...newUploads].filter(u => u.status === 'pending' || newUploads.includes(u)));
+      };
+
+      const processQueue = async (queue) => {
+        const pending = queue.filter(u => u.status === 'pending');
+        const toProcess = pending.slice(0, maxParallel);
+
+        await Promise.all(toProcess.map(upload => uploadFile(upload)));
+      };
+
+      const uploadFile = async (upload) => {
+        const formData = new FormData();
+        formData.append('file', upload.file);
+
+        try {
+          setUploads(prev => prev.map(u =>
+            u.id === upload.id ? { ...u, status: 'uploading' } : u
+          ));
+
+          const xhr = new XMLHttpRequest();
+
+          xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+              const progress = Math.round((e.loaded / e.total) * 100);
+              setUploads(prev => prev.map(u =>
+                u.id === upload.id ? { ...u, progress } : u
+              ));
+            }
+          });
+
+          xhr.addEventListener('load', () => {
+            if (xhr.status === 200) {
+              setUploads(prev => prev.map(u =>
+                u.id === upload.id ? { ...u, status: 'completed', progress: 100 } : u
+              ));
+              fetchFiles();
+            } else {
+              throw new Error('Upload failed');
+            }
+          });
+
+          xhr.addEventListener('error', () => {
+            setUploads(prev => prev.map(u =>
+              u.id === upload.id ? { ...u, status: 'error', error: 'Upload failed' } : u
+            ));
+          });
+
+          xhr.open('POST', `${API_URL}/upload`);
+          if (password) xhr.setRequestHeader('Authorization', password);
+          xhr.send(formData);
+        } catch (error) {
+          setUploads(prev => prev.map(u =>
+            u.id === upload.id ? { ...u, status: 'error', error: error.message } : u
+          ));
+        }
+      };
+
+      const handleDragOver = (e) => {
+        e.preventDefault();
+        setIsDragging(true);
+      };
+
+      const handleDragLeave = () => {
+        setIsDragging(false);
+      };
+
+      const handleDrop = (e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        handleFileSelect(e.dataTransfer.files);
+      };
+
+      const deleteFile = async (filename) => {
+        try {
+          const response = await fetch(`${API_URL}/files/${filename}`, {
+            method: 'DELETE',
+            headers: password ? { 'Authorization': password } : {}
+          });
+          if (response.ok) {
+            fetchFiles();
+          }
+        } catch (error) {
+          console.error('Failed to delete file:', error);
+        }
+      };
+
+      const formatFileSize = (bytes) => {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+      };
+
+      if (!isAuthenticated) {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
+              <div className="flex items-center justify-center mb-6">
+                <Icon icon={Lock} className="w-12 h-12 text-indigo-600" />
+              </div>
+              <h1 className="text-3xl font-bold text-center text-gray-800 mb-2">SUS</h1>
+              <p className="text-center text-gray-600 mb-6">Simple Upload Service</p>
+
+              <div>
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && handleAuth()}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition"
+                    placeholder="Enter password (leave empty if none)"
+                  />
+                  {authError && (
+                    <p className="mt-2 text-sm text-red-600">{authError}</p>
+                  )}
+                </div>
+                <button
+                  onClick={handleAuth}
+                  className="w-full bg-indigo-600 text-white py-3 rounded-lg font-medium hover:bg-indigo-700 transition"
+                >
+                  Authenticate
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
+          <div className="max-w-6xl mx-auto">
+            <div className="bg-white rounded-2xl shadow-xl p-8 mb-6">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h1 className="text-3xl font-bold text-gray-800">SUS</h1>
+                  <p className="text-gray-600">Simple Upload Service</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <label className="text-sm text-gray-600">
+                    Max parallel:
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={maxParallel}
+                      onChange={(e) => setMaxParallel(parseInt(e.target.value))}
+                      className="ml-2 w-16 px-2 py-1 border border-gray-300 rounded"
+                    />
+                  </label>
+                  <button
+                    onClick={() => setIsAuthenticated(false)}
+                    className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition"
+                  >
+                    Logout
+                  </button>
+                </div>
+              </div>
+
+              <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                className={`border-2 border-dashed rounded-xl p-12 text-center transition ${isDragging ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300 hover:border-indigo-400'
+                  }`}
+              >
+                <Icon icon={Upload} className="w-16 h-16 mx-auto mb-4 text-gray-400" />
+                <p className="text-lg font-medium text-gray-700 mb-2">
+                  Drop files here or click to browse
+                </p>
+                <p className="text-sm text-gray-500 mb-4">
+                  Upload multiple files simultaneously
+                </p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={(e) => handleFileSelect(e.target.files)}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-6 py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition"
+                >
+                  Select Files
+                </button>
+              </div>
+
+              {uploads.length > 0 && (
+                <div className="mt-6 space-y-3">
+                  {uploads.map(upload => (
+                    <div key={upload.id} className="bg-gray-50 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3">
+                          <Icon icon={File} className="w-5 h-5 text-gray-400" />
+                          <span className="text-sm font-medium text-gray-700">
+                            {upload.file.name}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            ({formatFileSize(upload.file.size)})
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {upload.status === 'completed' && (
+                            <Icon icon={CheckCircle} className="w-5 h-5 text-green-500" />
+                          )}
+                          {upload.status === 'error' && (
+                            <Icon icon={XCircle} className="w-5 h-5 text-red-500" />
+                          )}
+                          <span className="text-sm font-medium text-gray-600">
+                            {upload.progress}%
+                          </span>
+                        </div>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className={`h-2 rounded-full transition-all ${upload.status === 'error' ? 'bg-red-500' :
+                            upload.status === 'completed' ? 'bg-green-500' : 'bg-indigo-600'
+                            }`}
+                          style={{ width: `${upload.progress}%` }}
+                        />
+                      </div>
+                      {upload.error && (
+                        <p className="text-xs text-red-600 mt-2">{upload.error}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-xl p-8">
+              <h2 className="text-2xl font-bold text-gray-800 mb-4">Uploaded Files</h2>
+              {files.length === 0 ? (
+                <p className="text-gray-500 text-center py-8">No files uploaded yet</p>
+              ) : (
+                <div className="space-y-2">
+                  {files.map(file => (
+                    <div key={file.name} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
+                      <div className="flex items-center gap-3">
+                        <Icon icon={File} className="w-5 h-5 text-gray-400" />
+                        <div>
+                          <p className="text-sm font-medium text-gray-700">{file.name}</p>
+                          <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={`${API_URL}/files/${file.name}`}
+                          download
+                          className="p-2 text-indigo-600 hover:bg-indigo-50 rounded transition"
+                        >
+                          <Icon icon={Download} className="w-5 h-5" />
+                        </a>
+                        <button
+                          onClick={() => deleteFile(file.name)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded transition"
+                        >
+                          <Icon icon={Trash2} className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+
+</html>
