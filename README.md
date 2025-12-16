@@ -39,7 +39,7 @@ docker-compose up -d
 
 Build the image:
 ```bash
-docker build -t sammwyy/sus .
+docker build -t sammwy/sus .
 ```
 
 Run the container:
@@ -48,7 +48,7 @@ docker run -d \
   -p 3000:3000 \
   -v $(pwd)/data:/data \
   -e PASSWORD=your_password_here \
-  sammwyy/sus
+  sammwy/sus
 ```
 
 ### Without Docker
@@ -85,7 +85,7 @@ Configure the service using environment variables:
 Map a local directory to persist uploaded files:
 
 ```bash
-docker run -v /path/to/local/dir:/data sammwyy/sus
+docker run -v /path/to/local/dir:/data sammwy/sus
 ```
 
 ## API Endpoints
@@ -132,4 +132,4 @@ Contributions are welcome! Please open an issue or submit a pull request.
 
 ## Author
 
-[sammwyy](https://github.com/sammwyy)
+[sammwy](https://github.com/sammwyy)
